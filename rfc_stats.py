@@ -4,7 +4,7 @@
 Calculates participant statistics for MediaWiki RFC-s/votes/etc.
 
 Assumptions:
-* RFC is on a single page, with each position having its own section
+* RFC is on a single page, seperate pages will need to be run seperatly
 * every vote starts with # (numbered list item) - other lines (including those starting with ##, #: etc) are ignored
 * first userpage/talkpage link in the line is that of the voter (this will fail sometimes, but hopefully not often
   enough to throw off the results)
@@ -35,12 +35,6 @@ class Vote:
     """Data about a single vote"""
 
     def __init__(self):
-        self.section_label = None
-        """
-        @type: str
-        One of the section labels
-        """
-
         self.text = None
         """
         @type: str
@@ -74,17 +68,15 @@ class Vote:
         return self_dict
 
     @classmethod
-    def from_line(cls, page, line, section_label):
+    def from_line(cls, page, line):
         """
         Creates a Vote from a line of text (which should contain a signature). There is no sanity check done
         to see if it is indeed a vote.
         @type page: VotePage
         @type line: str
-        @type section_label: str
         @rtype: Vote
         """
         vote = cls()
-        vote.section_label = section_label
         vote.text = line
         vote.datetime = cls.parse_datetime(line)
 
@@ -108,7 +100,7 @@ class Vote:
         @rtype: str
         """
         # some people use @[[User:Foo]] to refer to others, so we skip sigs starting with those
-        m = re.search(r'[^@]\[\[User(?:_talk)?:([^|\]]+)', line)
+        m = re.search(r'[^@]\[\[Special:Contributions/([^|\]]+)', line, re.IGNORECASE)
         if m:
             username = m.group(1)
             # some people write their usernames in weird ways in their signatures
@@ -131,7 +123,7 @@ class Vote:
         @type lines: collections.Iterable[string]
         """
         for line in lines:
-            if re.match(r'#[^#*:]', line):
+            if re.match(r'<small>', line):
                 yield line
 
     def get_plaintext(self):
@@ -202,21 +194,19 @@ class Api:
     def __call__(self, **params):
         return self.call(**params)
 
-    def get_section_text(self, page=None, revision=None, section=None):
+    def get_text(self, page=None, revision=None):
         """
-        Returns the text of the specified section. section is required; one of page and revision is required.
+        Returns the text of the specified page. one of page and revision is required.
         @type page: str
         @type revision: int
-        @type section: int
         @rtype: str
         """
-        if not section or not page and not revision:
-            raise ValueError('section and either page or revision is required')
+        if not page and not revision:
+            raise ValueError('either page or revision is required')
 
         params = {
             'action': 'query',
             'prop': 'revisions',
-            'rvsection': section,
             'rvprop': 'content'
         }
         if revision:
@@ -229,15 +219,14 @@ class Api:
 
 
 class VotePage:
-    def __init__(self, api, page=None, revision=None, sections=None):
+    def __init__(self, api, page=None, revision=None):
         """
         @type api: Api
         @type page: str
         @type revision: int
-        @type sections: dict[str, int]
         """
-        if not sections or not page and not revision:
-            raise ValueError('sections and either page or revision is required')
+        if not page and not revision:
+            raise ValueError('either page or revision is required')
 
         self.api = api
         """@type: Api"""
@@ -254,20 +243,6 @@ class VotePage:
         @type: int
         """
 
-        self.sections = self.create_ordered_dict(sections)
-        """
-        Section ids and internal labels (will be used in the output)
-        @type: OrderedDict[str, int]
-        """
-
-    @staticmethod
-    def create_ordered_dict(sections):
-        """
-        Orders sections by
-        @type sections: dict[str, int]
-        @rtype: OrderedDict[str, int]
-        """
-        return OrderedDict(sorted(sections.items(), key=lambda t: t[1]))
 
     def get_page_arg(self):
         arg = {}
@@ -277,32 +252,23 @@ class VotePage:
             arg['page'] = self.page
         return arg
 
-    def get_vote_lines(self, section):
-        """
-        @type section: int
-        """
+    def get_vote_lines(self):
         args = self.get_page_arg()
-        args['section'] = section
-        all_lines = self.api.get_section_text(page=self.page, revision=self.revision, section=section).splitlines()
+        all_lines = self.api.get_text(page=self.page, revision=self.revision).splitlines()
         for line in Vote.filter_vote_lines(all_lines):
             yield line
 
-    def get_votes(self, section=None, limit=None):
+    def get_votes(self, limit=None):
         """
-        @type section: int|str
-        @param section: limit votes to a single section
         @type limit: int
         @param limit: only return a limited number of votes
         """
         i = 0
-        for section_label, section_id in self.sections.items():
-            if section and section_label != section and section_id != section:
-                continue
-            for line in self.get_vote_lines(section_id):
-                i += 1
-                yield Vote.from_line(self, line, section_label)
-                if i == limit:
-                    return
+        for line in self.get_vote_lines():
+            i += 1
+            yield Vote.from_line(self, line)
+            if i == limit:
+                return
 
 
 class GlobalUser:
@@ -406,7 +372,7 @@ class User:
         self.api = api
         """@type: Api"""
 
-        self.username = username
+        self.username = username.strip()
         """Username without the User: prefix"""
 
         self.global_user = None
@@ -475,7 +441,7 @@ class User:
         merged = False
         if 'merged' in global_data:
             for account in global_data['merged']:
-                if account['wiki'] == 'commonswiki':
+                if account['wiki'] == 'metawiki':
                     merged = True
                     break
         return merged
@@ -510,7 +476,7 @@ class CsvVoteWriter:
         self.file.write(codecs.BOM_UTF8)
 
         self.writer = csv.writer(self.file)
-        self.writerow(['User', '!vote section', '!vote date', 'Commons edit count', 'First Commons edit',
+        self.writerow(['User', '!vote date', 'Meta edit count', 'First Meta edit',
                        'Global edit count', 'Home wiki', 'Full text'])
 
     def __enter__(self):
@@ -532,17 +498,16 @@ class CsvVoteWriter:
         """
         self.writerow([
             vote.user.username if vote.user else '-',
-            vote.section_label,
             vote.datetime.isoformat(' ') if vote.datetime else '-',
             vote.user.editcount if vote.user else '-',
             vote.user.first_edit.isoformat(' ') if vote.user else '-',
             vote.user.get_global_editcount() or '-' if vote.user else '-',
-            vote.user.get_home_wiki() or 'commonswiki' if vote.user else '-',
+            vote.user.get_home_wiki() or 'metawiki' if vote.user else '-',
             vote.get_plaintext(),
         ])
 
 
-vote_page = VotePage(Api.from_domain(config.wiki), page=config.page, revision=config.revision, sections=config.sections)
+vote_page = VotePage(Api.from_domain(config.wiki), page=config.page, revision=config.revision)
 with CsvVoteWriter('votes.csv') as writer:
     for i, vote in enumerate(vote_page.get_votes()):
         writer.write(vote)
