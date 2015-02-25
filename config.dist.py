@@ -11,15 +11,6 @@ page = 'Project:RFC/Some RFC'
 # Which revision of the page to use (None means current)
 revision = None
 
-# Relevant sections in this format:
-# {
-#     'foo': 1,
-#     'bar': 3,
-# }
-# The name will be used in the output to identify what the user voted for.
-# The number is the same one you see in the section edit link.
-sections = {
-}
 
 # date format in signature
 # you only need to change these for non-English wikis
