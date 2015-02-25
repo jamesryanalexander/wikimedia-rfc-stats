@@ -5,10 +5,10 @@ Calculates participant statistics for MediaWiki RFC-s/votes/etc.
 
 Assumptions:
 * RFC is on a single page, seperate pages will need to be run seperatly
-* every vote starts with # (numbered list item) - other lines (including those starting with ##, #: etc) are ignored
-* first userpage/talkpage link in the line is that of the voter (this will fail sometimes, but hopefully not often
+* every vote has a line that starts with <small> and includes a Special:Contributions link - other lines are ignored
+* first Special:Contributions link in the line is that of the voter (this will fail sometimes, but hopefully not often
   enough to throw off the results)
-* first date string in the line is the time of the vote
+* first date string in the line is the time of the vote (if no date/time it just skips this)
 
 Usage:
 * install dependencies with pip install -r requirements.txt
@@ -425,8 +425,11 @@ class User:
             self.groups = local_data['groups']
             self.editcount = local_data['editcount']
 
-            first_local_edit = data['usercontribs'][0]['timestamp']
-            self.first_edit = Api.timestamp_to_datetime(first_local_edit)
+            if len(data['usercontribs']) > 0:
+                first_local_edit = data['usercontribs'][0]['timestamp']
+                self.first_edit = Api.timestamp_to_datetime(first_local_edit)
+            else:
+                self.first_edit = datetime.fromtimestamp(0)
 
             if self.data_is_global(global_data):
                 self.global_user = GlobalUser.from_globaluserinfo(self.username, global_data)
